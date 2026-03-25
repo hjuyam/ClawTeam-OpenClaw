@@ -31,6 +31,12 @@ _json_output: bool = False
 _data_dir: str | None = None
 
 
+def _now_iso() -> str:
+    """Return current time in ISO format with UTC timezone."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _version_callback(value: bool):
     if value:
         console.print(f"clawteam v{__version__}")
@@ -1107,6 +1113,7 @@ def task_wait(
     timeout: Optional[float] = typer.Option(None, "--timeout", "-t", help="Max seconds to wait (default: no limit)"),
 ):
     """Block until all tasks in a team are completed."""
+
     from clawteam.team.mailbox import MailboxManager
     from clawteam.team.manager import TeamManager
     from clawteam.team.tasks import TaskStore
@@ -1237,6 +1244,124 @@ def task_wait(
 
     if result.status != "completed":
         raise typer.Exit(1)
+
+
+@task_app.command("monitor")
+def task_monitor(
+    team: str = typer.Argument(..., help="Team name"),
+    agent: Optional[str] = typer.Option(None, "--agent", "-a", help="Leader inbox to monitor (default: leader from team config)"),
+    poll_interval: float = typer.Option(5.0, "--poll-interval", "-p", help="Seconds between polls"),
+    timeout: Optional[float] = typer.Option(None, "--timeout", "-t", help="Max seconds to monitor (default: no limit)"),
+    ping_after: float = typer.Option(30.0, "--ping-after", help="Seconds a task may stay pending before leader pings owner"),
+    nudge_after: float = typer.Option(180.0, "--nudge-after", help="Seconds a task may stay in_progress before leader nudges owner"),
+    stalled_after: float = typer.Option(600.0, "--stalled-after", help="Seconds a task may stay in_progress before reporting as stalled"),
+):
+    """Leader mode: monitor leader inbox + ping/nudge owners to keep the swarm moving.
+
+    This does NOT change task status automatically; it only coordinates via inbox messages
+    and surfaces progress. Combine with your normal spawn workflow.
+    """
+    from clawteam.team.mailbox import MailboxManager
+    from clawteam.team.manager import TeamManager
+    from clawteam.team.tasks import TaskStore
+    from clawteam.team.leader_loop import LeaderLoop, LeaderLoopConfig
+
+    # Resolve agent name for inbox monitoring
+    agent_name = agent
+    if not agent_name:
+        agent_name = TeamManager.get_leader_inbox(team)
+    if not agent_name:
+        from clawteam.identity import AgentIdentity
+        identity = AgentIdentity.from_env()
+        agent_name = TeamManager.resolve_inbox(team, identity.agent_name, identity.user)
+    elif agent:
+        from clawteam.identity import AgentIdentity
+        identity = AgentIdentity.from_env()
+        agent_name = TeamManager.resolve_inbox(team, agent_name, identity.user)
+
+    mailbox = MailboxManager(team)
+    store = TaskStore(team)
+
+    def _on_message(msg):
+        ts = msg.timestamp
+        if ts and "T" in ts:
+            ts = ts.split("T")[1][:8]
+        from_agent = msg.from_agent or "?"
+        content = (msg.content or "").strip()
+        if _json_output:
+            print(json.dumps({"event": "message", "from": from_agent, "content": content, "timestamp": msg.timestamp}), flush=True)
+        else:
+            console.print(f"  {ts}  message from={from_agent}: {content}")
+
+    def _on_progress(completed, total, in_progress, pending, blocked):
+        if _json_output:
+            print(json.dumps({"event": "progress", "completed": completed, "total": total, "in_progress": in_progress, "pending": pending, "blocked": blocked}), flush=True)
+        else:
+            console.print(f"  {completed}/{total} completed  ({in_progress} in progress, {pending} pending, {blocked} blocked)")
+
+    def _on_status_change(task_id, from_status, to_status, owner, subject, task_file):
+        """Emit task_status_change event."""
+        if _json_output:
+            print(json.dumps({
+                "event": "task_status_change",
+                "team": team,
+                "task_id": task_id,
+                "from_status": from_status.value if hasattr(from_status, "value") else from_status,
+                "to_status": to_status.value if hasattr(to_status, "value") else to_status,
+                "owner": owner,
+                "subject": subject,
+                "timestamp": _now_iso(),
+                "task_file": str(task_file),
+            }), flush=True)
+        else:
+            console.print(f"  [yellow]Task status changed: {task_id} {from_status.value if hasattr(from_status, "value") else from_status} -> {to_status.value if hasattr(to_status, "value") else to_status} ({owner})[/yellow]")
+
+    def _on_stalled(task_id, owner, subject, stalled_after, reason, suggested_action, task_file):
+        """Emit task_stalled event with dedupe."""
+        if _json_output:
+            print(json.dumps({
+                "event": "task_stalled",
+                "team": team,
+                "task_id": task_id,
+                "owner": owner,
+                "subject": subject,
+                "timestamp": _now_iso(),
+                "stalled_after": stalled_after,
+                "reason": reason,
+                "suggested_action": suggested_action,
+                "task_file": str(task_file),
+            }), flush=True)
+        else:
+            console.print(f"  [red]Task stalled: {task_id} ({owner}) - {reason}[/red]")
+
+    if not _json_output:
+        timeout_str = f"{timeout:.0f}s" if timeout else "none"
+        console.print(f"Leader monitor for team '[cyan]{team}[/cyan]'...")
+        console.print(
+            f"  Inbox: {agent_name}  |  Poll: {poll_interval}s  |  Timeout: {timeout_str}\n"
+            f"  ping_after={ping_after}s  |  nudge_after={nudge_after}s"
+        )
+        console.print()
+
+    loop = LeaderLoop(
+        team_name=team,
+        leader_inbox=agent_name,
+        mailbox=mailbox,
+        task_store=store,
+        cfg=LeaderLoopConfig(
+            poll_interval=poll_interval,
+            ping_after=ping_after,
+            nudge_after=nudge_after,
+            stalled_after=stalled_after,
+            timeout=timeout,
+        ),
+    )
+    loop.run(
+        on_message=_on_message,
+        on_progress=_on_progress,
+        on_status_change=_on_status_change,
+        on_stalled=_on_stalled,
+    )
 
 
 def _print_incomplete_tasks(task_details: list[dict]):
@@ -1884,6 +2009,7 @@ def board_serve(
     port: int = typer.Option(8080, "--port", "-p", help="HTTP server port"),
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
     interval: float = typer.Option(2.0, "--interval", "-i", help="SSE push interval in seconds"),
+    offline_ui: bool = typer.Option(False, "--offline-ui", help="Use offline UI without external CDN dependencies"),
 ):
     """Start Web UI dashboard server."""
     from clawteam.board.server import serve
@@ -1891,8 +2017,10 @@ def board_serve(
     console.print(f"Starting Web UI on http://{host}:{port}")
     if team:
         console.print(f"Default team: {team}")
+    if offline_ui:
+        console.print("Offline mode: using offline.html (no external CDN)")
     console.print("Press Ctrl+C to stop.")
-    serve(host=host, port=port, default_team=team or "", interval=interval)
+    serve(host=host, port=port, default_team=team or "", interval=interval, offline_ui=offline_ui)
 
 
 @board_app.command("attach")

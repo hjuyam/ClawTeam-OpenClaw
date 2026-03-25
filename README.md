@@ -255,6 +255,8 @@ bash scripts/install-openclaw.sh
 | `exec-approvals.json not found` | OpenClaw never ran | Run `openclaw` once to generate config, then retry Step 5 |
 | Agents block on permission prompts | Exec approvals security is "full" | Run Step 5 to switch to "allowlist" |
 | `pip install -e .` fails | Missing build deps | Run `pip install hatchling` first |
+| OpenClaw browser fails as root (`Running as root without --no-sandbox`) | Chromium sandbox restriction | In `~/.openclaw/openclaw.json` set `browser.noSandbox: true`, then `openclaw gateway restart` |
+| Agents exit with 429 / rate limit and tasks reset to pending | Provider rate limit; no backoff | Reduce concurrency, add retry/backoff (leader monitor loop), and ensure agents report `BLOCKED <task-id>: 429 ...` via inbox |
 
 ---
 
@@ -469,7 +471,22 @@ clawteam board show <team>                # terminal kanban
 clawteam board live <team> --interval 3   # auto-refresh
 clawteam board attach <team>              # tiled tmux view
 clawteam board serve --port 8080          # web UI
+clawteam board serve --port 8080 --offline-ui  # web UI (no external CDN)
 ```
+
+### Offline UI
+
+For environments without external CDN access (intranets, compliance requirements):
+
+```bash
+clawteam board serve --port 8080 --offline-ui
+```
+
+The offline UI (`offline.html`) uses:
+- System fonts instead of Google Fonts
+- Plain JavaScript instead of React/Babel
+- No external CDN dependencies
+- Same board functionality (tasks, status, refresh)
 
 </details>
 

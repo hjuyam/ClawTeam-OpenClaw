@@ -22,8 +22,18 @@ class BoardHandler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = self.path.split("?")[0]
 
-        if path == "/" or path == "/index.html":
+        if path == "/":
+            # Redirect to offline.html when offline mode is enabled
+            if getattr(self, "offline_ui", False):
+                self.send_response(302)
+                self.send_header("Location", "/offline.html")
+                self.end_headers()
+                return
             self._serve_static("index.html", "text/html")
+        elif path == "/index.html":
+            self._serve_static("index.html", "text/html")
+        elif path == "/offline.html":
+            self._serve_static("offline.html", "text/html")
         elif path == "/api/overview":
             self._serve_json(self.collector.collect_overview())
         elif path.startswith("/api/team/"):
@@ -106,12 +116,14 @@ def serve(
     port: int = 8080,
     default_team: str = "",
     interval: float = 2.0,
+    offline_ui: bool = False,
 ):
     """Start the Web UI server."""
     collector = BoardCollector()
     BoardHandler.collector = collector
     BoardHandler.default_team = default_team
     BoardHandler.interval = interval
+    BoardHandler.offline_ui = offline_ui
 
     server = ThreadingHTTPServer((host, port), BoardHandler)
     try:
