@@ -31,6 +31,12 @@ _json_output: bool = False
 _data_dir: str | None = None
 
 
+def _now_iso() -> str:
+    """Return current time in ISO format with UTC timezone."""
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
 def _version_callback(value: bool):
     if value:
         console.print(f"clawteam v{__version__}")
