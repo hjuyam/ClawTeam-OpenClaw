@@ -23,12 +23,15 @@ class LeaderLoopConfig:
     ping_after: float = 30.0
     nudge_after: float = 180.0
     timeout: float | None = None
+    stalled_after: float = 600.0
 
 
 @dataclass
 class LeaderLoopState:
     last_ping: dict[str, float] = field(default_factory=dict)   # task_id -> ts
     last_nudge: dict[str, float] = field(default_factory=dict)  # task_id -> ts
+    last_stalled: dict[str, bool] = field(default_factory=dict)  # task_id -> stalled event already emitted for current in_progress span
+    last_status: dict[str, TaskStatus] = field(default_factory=dict)  # task_id -> last seen status
 
 
 class LeaderLoop:
@@ -51,10 +54,12 @@ class LeaderLoop:
         self._start = time.monotonic()
         self._running = False
 
-    def run(self, on_message=None, on_progress=None, on_agent_dead=None) -> None:
+    def run(self, on_message=None, on_progress=None, on_agent_dead=None,
+            on_status_change=None, on_stalled=None) -> None:
         self._running = True
         last_summary = ""
         first_iteration = True
+        # Use stateful last_status / last_stalled so we can dedupe across loop iterations
 
         while self._running:
             # Always run at least once
@@ -86,8 +91,56 @@ class LeaderLoop:
                 if on_progress:
                     on_progress(completed, total, in_prog, pending, blocked)
 
-            # 4) Ping/nudge logic
+            # 4) Status change and stalled detection
             now = time.time()
+            for t in tasks:
+                if not t.owner:
+                    continue
+
+                # Detect status changes
+                old_status = self.state.last_status.get(t.id)
+                if old_status is None:
+                    # First time seeing this task; record baseline status (no event).
+                    self.state.last_status[t.id] = t.status
+                elif old_status != t.status:
+                    # Status changed - emit event and reset stalled dedupe
+                    if on_status_change:
+                        from clawteam.team.tasks import _tasks_root
+                        task_file = _tasks_root(self.team_name) / f"task-{t.id}.json"
+                        on_status_change(
+                            task_id=t.id,
+                            from_status=old_status,
+                            to_status=t.status,
+                            owner=t.owner,
+                            subject=t.subject,
+                            task_file=task_file,
+                        )
+                    self.state.last_status[t.id] = t.status
+                    self.state.last_stalled.pop(t.id, None)
+
+                # Detect stalled tasks
+                if t.status == TaskStatus.in_progress:
+                    age = _age_seconds(t, started=True)
+                    if age >= self.cfg.stalled_after and not self.state.last_stalled.get(t.id, False):
+                        if on_stalled:
+                            from clawteam.team.tasks import _tasks_root
+                            task_file = _tasks_root(self.team_name) / f"task-{t.id}.json"
+                            on_stalled(
+                                task_id=t.id,
+                                owner=t.owner,
+                                subject=t.subject,
+                                stalled_after=self.cfg.stalled_after,
+                                reason=f"Task has been running for {int(age)}s without status change",
+                                suggested_action="Update task status or reply with PROGRESS to avoid getting stuck",
+                                task_file=task_file,
+                            )
+                        # Dedup until status changes
+                        self.state.last_stalled[t.id] = True
+                else:
+                    # Reset dedupe once task leaves in_progress
+                    self.state.last_stalled.pop(t.id, None)
+
+            # 5) Ping/nudge logic
             for t in tasks:
                 if not t.owner:
                     continue
@@ -124,7 +177,7 @@ class LeaderLoop:
                             )
                             self.state.last_nudge[t.id] = now
 
-            # 5) Sleep
+            # 6) Sleep
             time.sleep(self.cfg.poll_interval)
 
     def stop(self):

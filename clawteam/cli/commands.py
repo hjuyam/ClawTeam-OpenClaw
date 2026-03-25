@@ -1248,6 +1248,7 @@ def task_monitor(
     timeout: Optional[float] = typer.Option(None, "--timeout", "-t", help="Max seconds to monitor (default: no limit)"),
     ping_after: float = typer.Option(30.0, "--ping-after", help="Seconds a task may stay pending before leader pings owner"),
     nudge_after: float = typer.Option(180.0, "--nudge-after", help="Seconds a task may stay in_progress before leader nudges owner"),
+    stalled_after: float = typer.Option(600.0, "--stalled-after", help="Seconds a task may stay in_progress before reporting as stalled"),
 ):
     """Leader mode: monitor leader inbox + ping/nudge owners to keep the swarm moving.
 
@@ -1292,6 +1293,41 @@ def task_monitor(
         else:
             console.print(f"  {completed}/{total} completed  ({in_progress} in progress, {pending} pending, {blocked} blocked)")
 
+    def _on_status_change(task_id, from_status, to_status, owner, subject, task_file):
+        """Emit task_status_change event."""
+        if _json_output:
+            print(json.dumps({
+                "event": "task_status_change",
+                "team": team,
+                "task_id": task_id,
+                "from_status": from_status.value if hasattr(from_status, "value") else from_status,
+                "to_status": to_status.value if hasattr(to_status, "value") else to_status,
+                "owner": owner,
+                "subject": subject,
+                "timestamp": _now_iso(),
+                "task_file": str(task_file),
+            }), flush=True)
+        else:
+            console.print(f"  [yellow]Task status changed: {task_id} {from_status.value if hasattr(from_status, "value") else from_status} -> {to_status.value if hasattr(to_status, "value") else to_status} ({owner})[/yellow]")
+
+    def _on_stalled(task_id, owner, subject, stalled_after, reason, suggested_action, task_file):
+        """Emit task_stalled event with dedupe."""
+        if _json_output:
+            print(json.dumps({
+                "event": "task_stalled",
+                "team": team,
+                "task_id": task_id,
+                "owner": owner,
+                "subject": subject,
+                "timestamp": _now_iso(),
+                "stalled_after": stalled_after,
+                "reason": reason,
+                "suggested_action": suggested_action,
+                "task_file": str(task_file),
+            }), flush=True)
+        else:
+            console.print(f"  [red]Task stalled: {task_id} ({owner}) - {reason}[/red]")
+
     if not _json_output:
         timeout_str = f"{timeout:.0f}s" if timeout else "none"
         console.print(f"Leader monitor for team '[cyan]{team}[/cyan]'...")
@@ -1310,10 +1346,16 @@ def task_monitor(
             poll_interval=poll_interval,
             ping_after=ping_after,
             nudge_after=nudge_after,
+            stalled_after=stalled_after,
             timeout=timeout,
         ),
     )
-    loop.run(on_message=_on_message, on_progress=_on_progress)
+    loop.run(
+        on_message=_on_message,
+        on_progress=_on_progress,
+        on_status_change=_on_status_change,
+        on_stalled=_on_stalled,
+    )
 
 
 def _print_incomplete_tasks(task_details: list[dict]):
