@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ClawTeam - Offline</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: #000000;
+    color: #f5f5f7;
+    min-height: 100vh;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 20px;
+  }
+
+  header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 20px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    margin-bottom: 20px;
+  }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 600;
+  }
+
+  .status {
+    font-size: 14px;
+    color: #86868b;
+  }
+
+  .status.connected {
+    color: #30d158;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 16px;
+  }
+
+  .card {
+    background: #0a0a0a;
+    border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 12px;
+    padding: 16px;
+    transition: border-color 0.2s;
+  }
+
+  .card:hover {
+    border-color: rgba(255,255,255,0.15);
+  }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 12px;
+  }
+
+  .card-title {
+    font-size: 14px;
+    font-weight: 500;
+    color: #86868b;
+  }
+
+  .card-subject {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .card-meta {
+    font-size: 12px;
+    color: #6e6e73;
+    display: flex;
+    gap: 12px;
+  }
+
+  .badge {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .badge.pending { background: rgba(255,159,10,0.15); color: #ff9f0a; }
+  .badge.in_progress { background: rgba(10,132,255,0.15); color: #0a84ff; }
+  .badge.completed { background: rgba(48,209,88,0.15); color: #30d158; }
+  .badge.blocked { background: rgba(255,69,58,0.15); color: #ff453a; }
+
+  .card-footer {
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255,255,255,0.08);
+  }
+
+  .card-file {
+    font-size: 12px;
+    color: #6e6e73;
+    word-break: break-all;
+  }
+
+  .loading {
+    text-align: center;
+    padding: 40px;
+    color: #86868b;
+  }
+
+  .error {
+    text-align: center;
+    padding: 40px;
+    color: #ff453a;
+  }
+
+  .refresh-btn {
+    background: rgba(255,255,255,0.08);
+    border: none;
+    color: #f5f5f7;
+    padding: 8px 16px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+  }
+
+  .refresh-btn:hover {
+    background: rgba(255,255,255,0.12);
+  }
+
+  .refresh-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>ClawTeam Board</h1>
+    <div>
+      <span class="status" id="status">Loading...</span>
+      <button class="refresh-btn" id="refreshBtn">Refresh</button>
+    </div>
+  </header>
+  <div id="board"></div>
+</div>
+
+<script>
+// ─── State ────────────────────────────────────────────────────────────────
+let state = {
+  tasks: [],
+  connected: false,
+  error: null,
+  loading: false
+};
+
+// ─── API ─────────────────────────────────────────────────────────────────
+const API_BASE = window.location.pathname.replace('/board', '').replace(/\/$/, '') || '/';
+
+async function fetchTasks() {
+  state.loading = true;
+  render();
+
+  try {
+    const response = await fetch(`${API_BASE}api/tasks`);
+    if (!response.ok) throw new Error('Failed to fetch tasks');
+
+    const data = await response.json();
+    state.tasks = data.tasks || [];
+    state.connected = true;
+    state.error = null;
+  } catch (err) {
+    state.error = err.message;
+    state.connected = false;
+  } finally {
+    state.loading = false;
+    render();
+  }
+}
+
+// ─── Render ──────────────────────────────────────────────────────────────
+function render() {
+  const board = document.getElementById('board');
+  const status = document.getElementById('status');
+  const refreshBtn = document.getElementById('refreshBtn');
+
+  status.textContent = state.connected ? 'Connected' : 'Disconnected';
+  status.className = 'status ' + (state.connected ? 'connected' : '');
+  refreshBtn.disabled = state.loading;
+
+  if (state.loading) {
+    board.innerHTML = '<div class="loading">Loading tasks...</div>';
+    return;
+  }
+
+  if (state.error) {
+    board.innerHTML = `<div class="error">Error: ${state.error}</div>`;
+    return;
+  }
+
+  if (state.tasks.length === 0) {
+    board.innerHTML = '<div class="loading">No tasks found</div>';
+    return;
+  }
+
+  const grid = document.createElement('div');
+  grid.className = 'grid';
+
+  state.tasks.forEach(task => {
+    const card = document.createElement('div');
+    card.className = 'card';
+
+    const badgeClass = task.status.toLowerCase().replace('_', '');
+
+    card.innerHTML = `
+      <div class="card-header">
+        <span class="card-title">Task ${task.id}</span>
+        <span class="badge ${badgeClass}">${task.status}</span>
+      </div>
+      <div class="card-subject">${escapeHtml(task.subject || 'No subject')}</div>
+      <div class="card-meta">
+        <span>Owner: ${escapeHtml(task.owner || 'unknown')}</span>
+      </div>
+      <div class="card-footer">
+        <div class="card-file">File: ${escapeHtml(task.file || 'N/A')}</div>
+      </div>
+    `;
+
+    grid.appendChild(card);
+  });
+
+  board.innerHTML = '';
+  board.appendChild(grid);
+}
+
+function escapeHtml(text) {
+  const div = document.createElement('div');
+  div.textContent = text;
+  return div.innerHTML;
+}
+
+// ─── Event Listeners ──────────────────────────────────────────────────────
+document.getElementById('refreshBtn').addEventListener('click', fetchTasks);
+
+// ─── Init ────────────────────────────────────────────────────────────────
+fetchTasks();
+</script>
+</body>
+</html>

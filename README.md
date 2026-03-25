@@ -471,7 +471,22 @@ clawteam board show <team>                # terminal kanban
 clawteam board live <team> --interval 3   # auto-refresh
 clawteam board attach <team>              # tiled tmux view
 clawteam board serve --port 8080          # web UI
+clawteam board serve --port 8080 --offline-ui  # web UI (no external CDN)
 ```
+
+### Offline UI
+
+For environments without external CDN access (intranets, compliance requirements):
+
+```bash
+clawteam board serve --port 8080 --offline-ui
+```
+
+The offline UI (`offline.html`) uses:
+- System fonts instead of Google Fonts
+- Plain JavaScript instead of React/Babel
+- No external CDN dependencies
+- Same board functionality (tasks, status, refresh)
 
 </details>
 

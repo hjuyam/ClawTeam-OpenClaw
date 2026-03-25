@@ -2009,6 +2009,7 @@ def board_serve(
     port: int = typer.Option(8080, "--port", "-p", help="HTTP server port"),
     host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
     interval: float = typer.Option(2.0, "--interval", "-i", help="SSE push interval in seconds"),
+    offline_ui: bool = typer.Option(False, "--offline-ui", help="Use offline UI without external CDN dependencies"),
 ):
     """Start Web UI dashboard server."""
     from clawteam.board.server import serve
@@ -2016,8 +2017,10 @@ def board_serve(
     console.print(f"Starting Web UI on http://{host}:{port}")
     if team:
         console.print(f"Default team: {team}")
+    if offline_ui:
+        console.print("Offline mode: using offline.html (no external CDN)")
     console.print("Press Ctrl+C to stop.")
-    serve(host=host, port=port, default_team=team or "", interval=interval)
+    serve(host=host, port=port, default_team=team or "", interval=interval, offline_ui=offline_ui)
 
 
 @board_app.command("attach")
