@@ -17,6 +17,7 @@ def build_agent_prompt(
     user: str = "",
     workspace_dir: str = "",
     workspace_branch: str = "",
+    memory_scope: str = "",
 ) -> str:
     """Build agent prompt: identity + task + optional workspace info."""
     lines = [
@@ -39,13 +40,22 @@ def build_agent_prompt(
             f"- Branch: {workspace_branch}",
             "- This is an isolated git worktree. Your changes do not affect the main branch.",
         ])
+    if memory_scope:
+        lines.extend([
+            "",
+            "## Shared Memory",
+            f"- Your team shares memory scope `{memory_scope}`.",
+            f"- Use `memory_store` with scope `{memory_scope}` for team-shared knowledge.",
+            f"- Use `memory_recall` to access memories stored by other team members in this scope.",
+        ])
     lines.extend([
         "",
         "## Task\n",
         task,
         "",
         "## Coordination Protocol\n",
-        f"- Use `clawteam task list {team_name} --owner {agent_name}` to see your tasks.",
+        f"- IMPORTANT: spawned OpenClaw workers run under exec allowlist mode. Use only the allowlisted executable path from $CLAWTEAM_BIN, not arbitrary shell commands.",
+        f"- First action: run `clawteam task list {team_name} --owner {agent_name}` to discover your task ID.",
         f"- Starting a task: `clawteam task update {team_name} <task-id> --status in_progress`",
         f"- Finishing a task: `clawteam task update {team_name} <task-id> --status completed`",
         "- If you encounter ANY error (tool failure, auth, 403/404, timeout, 429 rate limit), you MUST notify the leader immediately:",
@@ -53,7 +63,9 @@ def build_agent_prompt(
         "- Send progress updates periodically (don’t stay silent):",
         f'  `clawteam inbox send {team_name} {leader_name} "PROGRESS <task-id>: <1-3 bullets>"`',
         "- When you finish all tasks, send a summary to the leader:",
-        f'  `clawteam inbox send {team_name} {leader_name} "DONE: <brief summary>"`',
+        f'  `clawteam inbox send {team_name} {leader_name} "All tasks completed. <brief summary>"`',
+        "- If you are blocked or any clawteam command is denied/fails, message the leader immediately with the exact error text:",
+        f'  `clawteam inbox send {team_name} {leader_name} "Blocked: <exact error>"`',
         f"- After finishing work, report your costs: `clawteam cost report {team_name} --input-tokens <N> --output-tokens <N> --cost-cents <N>`",
         "",
     ])

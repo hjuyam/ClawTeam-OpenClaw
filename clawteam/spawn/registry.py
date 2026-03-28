@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+import time
 from pathlib import Path
 
 from clawteam.team.models import get_data_dir
@@ -29,6 +30,7 @@ def register_agent(
         "tmux_target": tmux_target,
         "pid": pid,
         "command": command or [],
+        "spawned_at": time.time(),
     }
     _save(path, registry)
 
@@ -36,6 +38,13 @@ def register_agent(
 def get_registry(team_name: str) -> dict[str, dict]:
     """Return the full spawn registry for a team."""
     return _load(_registry_path(team_name))
+
+
+def get_agent_info(team_name: str, agent_name: str) -> dict | None:
+    """Return persisted spawn info for a single agent, if any."""
+    registry = get_registry(team_name)
+    info = registry.get(agent_name)
+    return info if isinstance(info, dict) else None
 
 
 def is_agent_alive(team_name: str, agent_name: str) -> bool | None:
@@ -72,6 +81,36 @@ def list_dead_agents(team_name: str) -> list[str]:
         if alive is False:
             dead.append(name)
     return dead
+
+
+
+def list_zombie_agents(team_name: str, max_hours: float = 2.0) -> list[dict]:
+    """Return agents that are still alive but have been running longer than max_hours.
+
+    Each entry contains: agent_name, pid, backend, spawned_at (unix ts), running_hours.
+    Agents with no spawned_at recorded are skipped (legacy registry entries).
+    """
+    registry = get_registry(team_name)
+    threshold = max_hours * 3600
+    now = time.time()
+    zombies = []
+    for name, info in registry.items():
+        spawned_at = info.get("spawned_at")
+        if not spawned_at:
+            continue
+        alive = is_agent_alive(team_name, name)
+        if alive is True:
+            running_seconds = now - spawned_at
+            if running_seconds > threshold:
+                zombies.append({
+                    "agent_name": name,
+                    "pid": info.get("pid", 0),
+                    "backend": info.get("backend", ""),
+                    "spawned_at": spawned_at,
+                    "running_hours": round(running_seconds / 3600, 1),
+                })
+    return zombies
+
 
 
 def _tmux_pane_alive(target: str) -> bool:
